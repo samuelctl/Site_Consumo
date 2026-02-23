@@ -24,7 +24,7 @@ from models.consumo import Consumo
 target_metadata = Base.metadata
 
 # URL do banco de dados
-DATABASE_URL = "postgresql+psycopg2://postgres:81848938spM!@localhost:5432/db_crud"
+DATABASE_URL = "postgresql+psycopg2://postgres:**********@localhost:5432/db_crud"
 
 # Função para rodar migrations offline
 def run_migrations_offline() -> None:
