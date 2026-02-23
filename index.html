@@ -672,10 +672,15 @@ input:focus{
       </div>
     </div>
 
-    <div id="simHistWrap" style="display:none;display:flex;flex-direction:column;gap:.6rem;">
+    <div id="simHistWrap" style="display:none;flex-direction:column;gap:.6rem;">
       <div class="sim-hist-header">
         <div class="sim-hist-ttl">Histórico de Simulações</div>
         <div class="sim-hist-count" id="shCount">0 registros</div>
+      </div>
+      <div class="chart-box" id="simChartBox">
+        <div class="chart-ttl">Custo por Simulação</div>
+        <div class="chart-sub">valor calculado em cada simulação realizada</div>
+        <canvas id="chartSim" height="180"></canvas>
       </div>
       <div id="shList" style="display:flex;flex-direction:column;gap:.5rem;"></div>
     </div>
@@ -726,7 +731,7 @@ input:focus{
 const API = 'http://127.0.0.1:8000';
 let currentUser = null, consumos = [], simulacoes = [];
 let tipoSel = null, simTipo = null, delId = null;
-let activePeriod = 'all', chartLine = null, chartDnut = null;
+let activePeriod = 'all', chartLine = null, chartDnut = null, chartSim = null;
 
 /* ═══ BG CANVAS ═══ */
 (function(){
@@ -843,7 +848,8 @@ async function login(){
 }
 
 function logout(){
-  currentUser=null;consumos=[];simulacoes=[];destroyCharts();
+  if(currentUser) sessionStorage.removeItem('avSims_'+currentUser.id);
+  currentUser=null;consumos=[];simulacoes=[];destroyCharts();destroySimChart();
   sessionStorage.removeItem('avUser');
   showScreen('screenLogin');toast('// sessão encerrada');
 }
@@ -995,6 +1001,7 @@ async function executarSimulacao(){
     $('simResult').style.display='';
     /* Salva litros no histórico local para exibição, mas m³ foi o que foi calculado */
     simulacoes.unshift({atividade,tipo:simTipo,consumo_litros:isAgua?litros:null,consumo_valor:consumoParaAPI,valor_calculado:res.total,regiao:res.regiao,ts:new Date()});
+    sessionStorage.setItem('avSims_'+currentUser.id, JSON.stringify(simulacoes));
     renderSimHist();
     toast(`// R$ ${parseFloat(res.total).toFixed(2).replace('.',',')} calculado`);
   }catch(e){toast(e.message,'error');}finally{loading(false);}
@@ -1004,23 +1011,83 @@ function renderSimHist(){
   if(!simulacoes.length)return;
   $('simHistWrap').style.display='flex';
   $('shCount').textContent=`${simulacoes.length} registro${simulacoes.length>1?'s':''}`;
+
+  // Lista de itens
   $('shList').innerHTML=simulacoes.map((s,i)=>{
     const isAgua=s.tipo==='Agua';
     return `<div class="sh-item" style="animation-delay:${i*.05}s">
       <div class="sh-ico" style="background:${isAgua?'rgba(0,229,200,.14)':'rgba(255,215,0,.14)'};border:1px solid ${isAgua?'rgba(0,229,200,.3)':'rgba(255,215,0,.3)'};">${isAgua?'💧':'⚡'}</div>
       <div class="sh-info">
         <div class="sh-ativ">${s.atividade}</div>
-        <div class="sh-meta">${isAgua ? ((s.consumo_litros ? s.consumo_litros.toLocaleString("pt-BR") : "") + " L → " + Number(s.consumo_valor).toFixed(4) + " m³") : (s.consumo_valor + " kWh")} · ${s.regiao}</div>
+        <div class="sh-meta">${isAgua ? ((s.consumo_litros ? s.consumo_litros.toLocaleString('pt-BR') : '') + ' L → ' + Number(s.consumo_valor).toFixed(4) + ' m³') : (s.consumo_valor + ' kWh')} · ${s.regiao}</div>
       </div>
       <div class="sh-val">${fmtBRL(s.valor_calculado)}</div>
     </div>`;
   }).join('');
+
+  // Gráfico de barras
+  destroySimChart();
+  const labels = [...simulacoes].reverse().map((s,i)=> s.atividade.length>14 ? s.atividade.slice(0,13)+'…' : s.atividade);
+  const values = [...simulacoes].reverse().map(s=>parseFloat(s.valor_calculado));
+  const colors = [...simulacoes].reverse().map(s=>s.tipo==='Agua'?'rgba(0,229,200,.85)':'rgba(255,215,0,.85)');
+  const borders= [...simulacoes].reverse().map(s=>s.tipo==='Agua'?'#00e5c8':'#ffd700');
+
+  const ctx=$('chartSim').getContext('2d');
+  chartSim=new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels,
+      datasets:[{
+        data:values,
+        backgroundColor:colors,
+        borderColor:borders,
+        borderWidth:1.5,
+        borderRadius:6,
+        borderSkipped:false,
+      }]
+    },
+    options:{
+      responsive:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(2,13,15,.97)',
+          titleColor:'#00e5c8',bodyColor:'#e8f8f5',
+          borderColor:'rgba(0,229,200,.25)',borderWidth:1,padding:12,
+          titleFont:{family:"'Space Mono',monospace",size:10},
+          bodyFont:{family:"'Space Mono',monospace",size:11},
+          callbacks:{
+            title:items=>{
+              const idx=[...simulacoes].length-1-items[0].dataIndex;
+              return simulacoes[[...simulacoes].length-1-items[0].dataIndex]?.atividade||items[0].label;
+            },
+            label:item=>'  '+fmtBRL(item.parsed.y)
+          }
+        }
+      },
+      scales:{
+        x:{
+          grid:{color:'rgba(0,229,200,.05)'},
+          ticks:{color:'rgba(74,138,144,.8)',font:{family:"'Space Mono',monospace",size:9},maxRotation:30}
+        },
+        y:{
+          grid:{color:'rgba(0,229,200,.05)'},
+          ticks:{color:'rgba(74,138,144,.8)',font:{family:"'Space Mono',monospace",size:9},callback:v=>'R$'+v},
+          beginAtZero:true
+        }
+      }
+    }
+  });
 }
 
 /* ═══ CHARTS ═══ */
 function destroyCharts(){
   if(chartLine){chartLine.destroy();chartLine=null;}
   if(chartDnut){chartDnut.destroy();chartDnut=null;}
+}
+function destroySimChart(){
+  if(chartSim){chartSim.destroy();chartSim=null;}
 }
 function filterPeriod(arr){
   const now=new Date();
@@ -1165,8 +1232,11 @@ $('m-data').value=new Date().toISOString().split('T')[0];
   if(!s)return;
   try{
     currentUser=JSON.parse(s);
+    const savedSims=sessionStorage.getItem('avSims_'+currentUser.id);
+    if(savedSims) { simulacoes=JSON.parse(savedSims); }
     setupDash();await loadConsumos();
     showScreen('screenMenu');
+    if(simulacoes.length) renderSimHist();
   }catch{sessionStorage.removeItem('avUser');}
 })();
 </script>
